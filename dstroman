@@ -11,6 +11,18 @@ check_and_install_dependencies() {
     touch ~/.config/dstroman/editor
     echo "echo" >  ~/.config/dstroman/editor
   fi 
+
+  if command -v gum > /dev/null 2>&1; then
+    echo "gum is installed" > /dev/null
+  else
+    echo "Installing gum...." 
+    cd $HOME
+    wget https://github.com/charmbracelet/gum/releases/download/v0.16.1/gum_0.16.1_Linux_x86_64.tar.gz
+    tar -xzf ~/gum_0.16.1_Linux_x86_64.tar.gz
+    sudo mv ~/gum_0.16.1_Linux_x86_64/gum /usr/local/bin/
+    rm ~/gum_0.16.1_Linux_x86_64.tar.gz
+    rm -rf ~/gum_0.16.1_Linux_x86_64
+  fi
 } 
 check_and_install_dependencies
 
@@ -158,12 +170,23 @@ if [[ $NUMBER_OF_ARGUMENTS -eq 0 ]]; then
 else
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      --init)
+          check_and_install_dependencies
+          if command -v gum > /dev/null 2>&1; then
+             echo "gum is installed"
+          else
+             echo "gum is not installed"
+          fi
+          exit 0
+      shift 2
+      ;;
       --help)
           echo "
 
           $> dstroman [OPTION] [ARGUMENT]
 
-          OPTION/FLAG         ARGUMENT        USECASE        
+          OPTION/FLAG         ARGUMENT        USECASE   
+          --init              <none>          To install dependencies
           --navigate          <none>          To edit traverse docker objects's file system 
           --transfer          <none>          To transfer files in between docker objects
           --list-backups      <none>          List all the backups 
