@@ -12,7 +12,8 @@
 <br>
 
 # Dependencies & Supported Platforms
-- **Platforms:** GNU/Linux
+- **Platforms:** GNU/Linux 
+- **Arch:** x86_64, amd64
 - **Dependencies:** [charmbracelet/gum](https://github.com/charmbracelet/gum), [Docker CLI](https://docs.docker.com/engine/reference/commandline/cli/)
 <br>
 
@@ -24,7 +25,7 @@ https://github.com/user-attachments/assets/79beaeb2-f58d-4c91-a133-4b7c373a42e2
 # Installation 
 Copy and paste the command below after installing the dependencies(gum, docker cli) (The command requires curl)
 ```bash
-sudo curl -fsSL https://raw.githubusercontent.com/hackctl/dstroman/refs/heads/legacy/dstroman -o /usr/local/bin/dstroman && sudo chmod +x /usr/local/bin/dstroman && (sudo groupadd docker 2>/dev/null || true) && (sudo gpasswd --add "$USER" docker 2>/dev/null || true)
+sudo curl -fsSL https://raw.githubusercontent.com/myselfakashagarwal/dstroman/refs/heads/legacy/dstroman -o /usr/local/bin/dstroman && sudo chmod +x /usr/local/bin/dstroman 
 ```
 <br><br>
 
@@ -52,6 +53,11 @@ Example:
 - Editor config can be found at ~/.config/dstroman/editor
 
 ## Options 
+
+for first initialization
+```bash
+dstroman --init
+```
 
 For navigateing objects and their files 
 ```bash

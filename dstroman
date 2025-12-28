@@ -3,26 +3,159 @@
 #----------------------------------------------------------handling dependencies -------------------------------------------------------#
 
 check_and_install_dependencies() { 
+  PACKAGE_MANAGER=""
+  if [[ -e /etc/yum ]]; then
+      PACKAGE_MANAGER="yum"
+  elif [[ -e /etc/apt ]]; then
+      PACKAGE_MANAGER="apt"
+  else
+    echo "ERROR Unsupported package manager"
+    exit 1;  
+  fi
+  
+  touch ~/dstroman.log
+  
+  if command -v wget > /dev/null 2>&1; then
+    echo "wget is installed" > /dev/null
+  else
+    read -p "Procceed with installation of 'wget' (y/n): " choice
+    if [[ $choice == "y" ]]; then
+      echo "INFO Installing 'wget'" 
+      sudo $PACKAGE_MANAGER install -y wget > ~/dstroman.log 2>&1
+      if command -v wget > /dev/null 2>&1; then
+        echo "INFO 'wget' installed successfully"
+      else
+        echo "ERROR 'wget' installation failed check logs at '~/dstroman.log'"
+        exit 1
+      fi
+    else
+      echo "FATAL 'wget' not installed, its is required for the script to run"
+      exit 1
+    fi
+  fi
+  
+  if command -v gum > /dev/null 2>&1; then
+    echo "gum is installed" > /dev/null
+    else
+      read -p "Proceed with installation of 'gum' ? (y/n): " choice
+      if [[ $choice == "y" ]]; then
+        echo "INFO Installing 'gum'" 
+        cd $HOME
+        wget -q https://github.com/charmbracelet/gum/releases/download/v0.16.1/gum_0.16.1_Linux_x86_64.tar.gz >> ~/dstroman.log 2>&1
+        tar -xzf ~/gum_0.16.1_Linux_x86_64.tar.gz > /dev/null
+        sudo mv ~/gum_0.16.1_Linux_x86_64/gum /usr/local/bin/gum > /dev/null
+        sudo chmod +x /usr/local/bin/gum > /dev/null
+        sudo rm ~/gum_0.16.1_Linux_x86_64.tar.gz > /dev/null
+        sudo rm -rf ~/gum_0.16.1_Linux_x86_64 > /dev/null
+        if command -v gum > /dev/null 2>&1; then
+          gum log --level info "'gum' installed successfully"
+        else
+          echo "ERROR 'gum' installation failed check logs at '~/dstroman.log'"
+          exit 1
+        fi
+      else 
+        echo "FATAL 'gum' not installed, its required for the script to run"
+        exit 1;
+      fi
+  fi
+  
+  if command -v which > /dev/null 2>&1; then
+    echo "which is installed" > /dev/null
+  else
+    read -p "Proceed with installation of 'which' ? (y/n): " choice
+    if [[ $choice == "y" ]]; then
+      gum log --level info "Installing 'which'"
+      sudo $PACKAGE_MANAGER install -y which >> ~/dstroman.log 2>&1
+      if command -v which > /dev/null 2>&1; then
+        gum log --level info "'which' installed successfully"
+      else
+        gum log --level error "'which' installation failed check logs at '~/dstroman.log'"
+        exit 1
+      fi
+    else
+      gum log --level fatal "'which' not installed, its is required for the script to run"
+      exit 1
+    fi
+  fi
+  
+  
+  if [[ ! -x $(which docker 2>/dev/null) ]]; then
+    read -p "Docker is not installed procceed with installation of docker (y/n): " choice
+    if [[ $choice == "y" ]]; then
+        if [[ $PACKAGE_MANAGER == "apt" ]]; then
+            gum log --level info "Installing Docker"
+            sudo $PACKAGE_MANAGER install -y docker.io docker-compose >> ~/dstroman.log 2>&1
+            if command -v docker > /dev/null 2>&1; then
+              gum log --level info "Docker installed successfully"
+            else
+              gum log --level error "Docker installation failed check logs at '~/dstroman.log'"
+              exit 1
+            fi
+            gum log --level info "Adding user to docker group"
+            sudo groupadd docker > /dev/null 2>&1
+            sudo usermod -aG docker $USER > /dev/null
+            gum log --level info "User added to docker group successfully"
+            gum log --level info "Enabling Docker service"
+            sudo systemctl enable docker > /dev/null 2>&1
+            gum log --level info "Docker service enabled successfully"
+            gum log --level info "Starting Docker service"
+            sudo systemctl start docker > /dev/null 2>&1
+            if sudo systemctl is-active --quiet docker; then
+              gum log --level info "Docker service started successfully"
+            else
+              gum log --level error "Docker service failed to start"
+              exit 1
+            fi
+        elif [[ $PACKAGE_MANAGER == "yum" ]]; then
+            gum log --level info "Updating system"
+            sudo yum update > /dev/null 2>&1
+            sudo yum install -y yum-utils device-mapper-persistent-data lvm2 >> ~/dstroman.log 2>&1
+            gum log --level info "System updated successfully"
+            gum log --level info "Installing Docker"
+            sudo yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo >> ~/dstroman.log 2>&1
+            sudo yum install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin --allowerasing >> ~/dstroman.log 2>&1
+            if command -v docker > /dev/null 2>&1; then
+              gum log --level info "Docker installed successfully"
+            else
+              gum log --level error "Docker installation failed"
+              exit 1
+            fi
+            gum log --level info "Adding user to docker group"
+            sudo groupadd docker > /dev/null 2>&1
+            sudo usermod -aG docker $USER > /dev/null
+            gum log --level info "User added to docker group successfully"
+            gum log --level info "Enabling Docker service"
+            sudo systemctl enable docker > /dev/null 2>&1
+            gum log --level info "Docker service enabled successfully"
+            gum log --level info "Starting Docker service"
+            sudo systemctl start docker > /dev/null 2>&1
+            if sudo systemctl is-active --quiet docker; then
+              gum log --level info "Docker service started successfully"
+            else
+              gum log --level error "Docker service failed to start"
+              exit 1
+            fi
+            gum log --level warn "After installation is complete, please log out and log back in to apply the changes." 
+        fi
+    else
+      gum log --level fatal "Docker not installed, please install it for using the script"
+      exit 1
+    fi
+  fi
+  
   if [[ ! -e ~/.config/dstroman/backups ]]; then 
+    gum log --level info "Creating backups directory"
     mkdir -p ~/.config/dstroman/backups 
+    gum log --level info "Backups directory created successfully"
   fi
 
   if [[ ! -e ~/.config/dstroman/editor ]]; then
+    gum log --level info "Creating editor configuration file"
     touch ~/.config/dstroman/editor
     echo "echo" >  ~/.config/dstroman/editor
+    gum log --level warn "Editor configuration file created successfully; by default it will echo the file path please edit it"
   fi 
 
-  if command -v gum > /dev/null 2>&1; then
-    echo "gum is installed" > /dev/null
-  else
-    echo "Installing gum...." 
-    cd $HOME
-    wget https://github.com/charmbracelet/gum/releases/download/v0.16.1/gum_0.16.1_Linux_x86_64.tar.gz
-    tar -xzf ~/gum_0.16.1_Linux_x86_64.tar.gz
-    sudo mv ~/gum_0.16.1_Linux_x86_64/gum /usr/local/bin/
-    rm ~/gum_0.16.1_Linux_x86_64.tar.gz
-    rm -rf ~/gum_0.16.1_Linux_x86_64
-  fi
 } 
 check_and_install_dependencies
 
@@ -43,6 +176,7 @@ validate_empty() {
 # check for existing containers 
 is_exists_container() {
   if [[ $(docker ps | wc -l ) -eq 1 ]]; then
+    gum log --level warn "No containers found"
     exit 1;
   fi
 }
@@ -50,6 +184,7 @@ is_exists_container() {
 # check for existing volume 
 is_exists_volume() {
   if [[ $(docker volume ls | wc -l) -eq 1 ]]; then 
+    gum log --level warn "No volumes found"
     exit 1;
   fi
 }
@@ -57,6 +192,7 @@ is_exists_volume() {
 # check for existing bind mounts 
 is_exists_bind() {
   if [[ $(docker ps | awk 'NR!=1{ print $1 }' | xargs docker inspect --format "{{with .Mounts}}{{range .}}{{$.ID}} {{$.Name}} {{.Source}} {{.Destination}}{{end}}{{end}}" 2> /dev/null | awk 'NF' | wc -l) -eq 0 ]]; then
+    gum log --level warn "No bind mounts found"
     exit 1
   fi
 }
@@ -71,16 +207,44 @@ select_bind() {
   docker ps | awk 'NR!=1{ print $1 }' | xargs docker inspect --format "{{with .Mounts}}{{range .}}{{$.ID}} {{$.Name}} {{.Source}} {{.Destination}}{{end}}{{end}}" | awk 'NF' | gum choose | awk '{ print $3 }' | xargs echo 
 }
 
+# Helper function: selecting the container
 # Helper function: selecting the container 
 select_container() {
-  docker inspect $(docker ps | awk 'NR!=1{ print }' | gum choose | awk '{ print $1 }') --format {{.GraphDriver.Data.MergedDir}} 2> /dev/null | xargs echo 
+  local CONTAINER_ID=$(docker ps | awk 'NR!=1{ print }' | gum choose | awk '{ print $1 }')
+  if [[ -z "$CONTAINER_ID" ]]; then
+    return 1
+  fi
+  
+  # Try GraphDriver.Data.MergedDir first (overlay2/overlayfs)
+  local MERGED_DIR=$(docker inspect "$CONTAINER_ID" --format '{{.GraphDriver.Data.MergedDir}}' 2>/dev/null)
+  
+  # If that doesn't exist, try UpperDir
+  if [[ -z "$MERGED_DIR" || "$MERGED_DIR" == "<no value>" ]]; then
+    MERGED_DIR=$(docker inspect "$CONTAINER_ID" --format '{{.GraphDriver.Data.UpperDir}}' 2>/dev/null)
+  fi
+  
+  # If still nothing, try to find it in overlay2 directory
+  if [[ -z "$MERGED_DIR" || "$MERGED_DIR" == "<no value>" ]]; then
+    local DRIVER=$(docker inspect "$CONTAINER_ID" --format '{{.Driver}}' 2>/dev/null)
+    if [[ "$DRIVER" == "overlay2" || "$DRIVER" == "overlayfs" ]]; then
+      MERGED_DIR=$(find /var/lib/docker/overlay2 -maxdepth 2 -name "merged" -type d 2>/dev/null | head -1)
+    fi
+  fi
+  
+  # Last resort: use container's data directory
+  if [[ -z "$MERGED_DIR" || "$MERGED_DIR" == "<no value>" ]]; then
+    FULL_ID=$(docker ps --no-trunc --format '{{.ID}}' | grep $CONTAINER_ID )
+    MERGED_DIR="/var/lib/docker/rootfs/overlayfs/$FULL_ID"
+  fi
+   echo "$MERGED_DIR" 
 }
 
 # Helper function: select container file   
 select_container_file() {  
   local SELECTED_CONTAINER=$(select_container);
   validate_empty $SELECTED_CONTAINER
-  sudo $(which gum) file --directory $SELECTED_CONTAINER | xargs echo 
+  # Change to container directory and run gum as current user with sudo for file access
+  sudo $(which gum) file --directory "$SELECTED_CONTAINER"
 }
 
 # Helper function: select host file
@@ -108,7 +272,8 @@ select_object_file() {
   local SELECTED_OBJECT_TYPE=$(gum choose "Container" "Volume" "Bind" "Host" "Exit")
   if [[ $SELECTED_OBJECT_TYPE == "Container" ]]; then
       local SELECTED_OBJECT_FILE=$(is_exists_container && select_container_file | xargs echo)
-      validate_empty "$SELECTED_OBJECT_FILE" && echo "$SELECTED_OBJECT_FILE"
+      echo "$SELECTED_OBJECT_FILE"
+      # validate_empty "$SELECTED_OBJECT_FILE" && echo "$SELECTED_OBJECT_FILE"
       exit 0
   elif [[ $SELECTED_OBJECT_TYPE == "Volume" ]]; then
       local SELECTED_OBJECT_FILE=$(is_exists_volume && select_volume_file | xargs echo)
@@ -172,11 +337,7 @@ else
     case "$1" in
       --init)
           check_and_install_dependencies
-          if command -v gum > /dev/null 2>&1; then
-             echo "gum is installed"
-          else
-             echo "gum is not installed"
-          fi
+          gum log --level info "You are ready to go!"
           exit 0
       shift 2
       ;;
@@ -186,7 +347,7 @@ else
           $> dstroman [OPTION] [ARGUMENT]
 
           OPTION/FLAG         ARGUMENT        USECASE   
-          --init              <none>          To install dependencies
+          --init              <none>          To install dependencies & initialize configuration   
           --navigate          <none>          To edit traverse docker objects's file system 
           --transfer          <none>          To transfer files in between docker objects
           --list-backups      <none>          List all the backups 
