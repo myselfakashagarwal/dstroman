@@ -1,93 +1,61 @@
+# dstroman
 
-![Screenshot 2025-04-29 at 2 20 30 AM](https://github.com/user-attachments/assets/0d550e7f-f619-486f-af26-f9727af3c2f5)
+dstroman is a CLI and TUI for navigating, transferring, and backing up files across Docker objects: containers, volumes, bind mounts, and the host itself, without hand copying container IDs or writing one off `docker cp` and `docker inspect` commands. Every action is driven through `gum` prompts, so the entire workflow is arrow keys and selections rather than memorized syntax.
 
+## Design Philosophy
 
-### A CLI + TUI for managing Docker objects with the file system. Perform day-to-day tasks and troubleshooting with ease no copy-pasting IDs or running command sprees, just arrows and coffee to get the work done.  
-<br>
+The object is the abstraction. Containers, volumes, bind mounts, and the host filesystem are all treated as instances of one concept: a thing with files that can be listed, selected, opened, transferred, or backed up. Every top level command (`navigate`, `transfer`, `create-backup`) starts by asking which kind of object the operator wants, then dispatches to the same handful of functions regardless of which one was picked.
 
-# Key Features 
-- File transfer between host, container, volume, and bind mounts
-- Open any file/directory from host, container, volume, or bind mounts with simple arrow navigation, in your desired console-based editor 
-- Take backups of host, container, volume, bind mounts, and their files with ease
-<br>
+The writable layer is resolved, not assumed. A running container does not expose its actual filesystem location directly, so selecting a container's files means finding where Docker actually put them on the host. The script tries this in order: `GraphDriver.Data.MergedDir` first (the standard overlay2 merged view), then `UpperDir` if that's empty, then a direct scan of `/var/lib/docker/overlay2` for a `merged` directory if neither field resolves, and finally a `rootfs/overlayfs/<container id>` path as a last resort. Only once one of these actually resolves does navigation into the container's files proceed.
 
-# Dependencies & Supported Platforms
-- **Platforms:** GNU/Linux 
-- **Arch:** x86_64, amd64
-- **Dependencies:** [charmbracelet/gum](https://github.com/charmbracelet/gum), [Docker CLI](https://docs.docker.com/engine/reference/commandline/cli/)
-<br>
+The editor is pluggable, not built in. dstroman does not embed an editor. `open_editor` simply runs whatever command is written in `~/.config/dstroman/editor` against the selected path. By default that file just echoes the path back, and the operator is expected to replace it with `vim`, `nvim`, or whatever console editor they actually use, run as root so it can reach root owned container and volume paths.
 
-# DEMO
-https://github.com/user-attachments/assets/79beaeb2-f58d-4c91-a133-4b7c373a42e2
+Nothing proceeds on an empty selection. Every `gum choose` or `gum file` result is passed through `validate_empty` before being acted on, so backing out of a picker (or a picker returning nothing because there was nothing to pick) halts the operation immediately rather than running a transfer or backup against an empty path.
 
-<br> 
+## How it works
 
-# Installation 
-Copy and paste the command below after installing the dependencies(gum, docker cli) (The command requires curl)
-```bash
-sudo curl -fsSL https://raw.githubusercontent.com/myselfakashagarwal/dstroman/refs/heads/legacy/dstroman -o /usr/local/bin/dstroman && sudo chmod +x /usr/local/bin/dstroman 
+### Bootstrap
+`dstroman --init` detects the package manager (`/etc/yum` means yum, `/etc/apt` means apt), then checks for `wget`, `gum`, `which`, and Docker one at a time, prompting before installing anything that's missing. `gum` is fetched as a pinned `x86_64` tarball directly from its GitHub release and installed to `/usr/local/bin`; Docker is installed through the native package manager, added to a `docker` group, and enabled and started as a service. Every install step's output is redirected into `~/dstroman.log` so failures can be inspected without cluttering the terminal. Init also creates `~/.config/dstroman/backups` and a default `~/.config/dstroman/editor` file if either is missing.
+
+### Discovering objects
+- **Containers** come from `docker ps`, and a container's files are found through the writable layer resolution chain above.
+- **Volumes** come from `docker volume ls`, resolved to their `Mountpoint` via `docker inspect`.
+- **Bind mounts** come from inspecting every running container's `Mounts` and listing each one's `Source` path, since binds aren't part of any single container's writable layer and have to be surfaced separately.
+- **Host** paths are just whatever directory the operator picks directly through `gum file`.
+
+Each of these has a matching existence check (`is_exists_container`, `is_exists_volume`, `is_exists_bind`) that warns and exits early if there's nothing of that type to select from, rather than handing an empty picker to the operator.
+
+### Backups
+A backup is just `cp -r` from a resolved object or object file path into `~/.config/dstroman/backups/<name>`, where `<name>` is validated to be alphanumeric before the copy runs. Listing backups reads that same directory; removing one prompts for which backup to delete via `gum choose` and removes it.
+
+### Transfers
+A transfer asks for Copy or Move, resolves a source and a destination the same way navigation resolves objects (through `select_object_file`), and runs `cp -r` or `mv` between them as root.
+
+## Usage
+
 ```
-<br><br>
+dstroman --init              Install dependencies and initialize configuration
+dstroman --navigate          Browse and open a file from a container, volume, bind mount, or host path
+dstroman --transfer          Copy or move a file between two objects
+dstroman --list-backups      List all backups
+dstroman --create-backup     Back up an object or a file within an object
+dstroman --remove-backup     Delete a backup
+```
 
-# Usage
-## Configure the editor for dstroman
-- By default, dstroman does not use any console-based text editor; it simply echoes the path that the `open_editor()` function gets.  
-- To configure it with your desired editor, edit the file `~/.config/dstroman/editor` and input the command that accepts a file path as the first argument.  
-- Make sure the editor command is available for the root user as well.
+## Dependencies and Supported Platforms
+- **Platform**: GNU/Linux
+- **Arch**: x86_64, amd64
+- **Dependencies**: [gum](https://github.com/charmbracelet/gum), the Docker CLI
 
-Example:
-- If you want to open files in **neovim** (assuming neovim is installed), the entry in `~/.config/dstroman/editor` would be `neovim`.
-- If you want to open files in **vim**, the entry would be `vim`.
+## Installation
+```bash
+sudo curl -fsSL https://raw.githubusercontent.com/myselfakashagarwal/dstroman/refs/heads/legacy/dstroman -o /usr/local/bin/dstroman && sudo chmod +x /usr/local/bin/dstroman
+```
 
-## Docker Requirements
-- You must have access to Docker without requiring a password. You can achieve this by creating a group named `docker` and adding your user to it.
-- The Docker daemon must be running before use.
+## Configuration
+- **Editor**: edit `~/.config/dstroman/editor` and put in a command that accepts a file path as its first argument (for example `nvim` or `vim`). Make sure that command is available to root as well, since dstroman opens files with `sudo`.
+- **Docker access**: the operator's user should be in the `docker` group so Docker commands run without a password prompt, and the Docker daemon needs to be running before use.
+- **Backups**: stored at `~/.config/dstroman/backups/`.
 
 ## Gum Usage Notes
-- Press **Enter** to select (if the current highlight is a directory, it will open the directory; if it's a file, it will select the file).
-- Use **arrow keys** to navigate (note: bind mount paths are not navigable because they are not part of the container's writable layer — binds are listed separately for navigation).
-- Press **Esc** whenever you need to abort an action.
-
-## Other 
-- Backups can be found at ~/.config/dstroman/backups/
-- Editor config can be found at ~/.config/dstroman/editor
-
-## Options 
-
-for first initialization
-```bash
-dstroman --init
-```
-
-For navigateing objects and their files 
-```bash
-dstroman --navigate
-```
-
-For moving copying file inbetween objects 
-```bash
-dstroman --transfer
-```
-
-To list backups
-```bash
-dstroman --list-backups
-```
-
-For creating backup 
-```bash
-dstroman --create-backup
-```
-
-For removing backup
-```bash
-dstroman --remove-backup
-```
-
-<hr> 
-
-![hackctl](https://github.com/user-attachments/assets/c7347fcf-6d29-4b99-a3c4-749841234ed1)
-
-
-
-
+Enter selects (opening a directory or picking a file); arrow keys navigate. Bind mount paths are not directly browsable the way container and volume paths are, since they sit outside the container's writable layer, so binds are listed and selected separately rather than traversed. Esc aborts an action at any point.
