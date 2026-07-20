@@ -4,9 +4,9 @@
 
 check_and_install_dependencies() { 
   PACKAGE_MANAGER=""
-  if [[ -e /etc/yum ]]; then
+  if command -v yum > /dev/null 2>&1; then
       PACKAGE_MANAGER="yum"
-  elif [[ -e /etc/apt ]]; then
+  elif command -v apt-get > /dev/null 2>&1; then
       PACKAGE_MANAGER="apt"
   else
     echo "ERROR Unsupported package manager"
@@ -14,14 +14,32 @@ check_and_install_dependencies() {
   fi
   
   touch ~/dstroman.log
+
+  if [[ $PACKAGE_MANAGER == "apt" ]]; then
+    echo "INFO Updating apt package lists"
+    sudo apt update
+  fi
+
+  # Fix #7: fall back to auto-yes when there's no interactive terminal
+  # (e.g. run via curl | bash, cron, or CI) instead of hanging/failing on read -p
+  confirm() {
+    local prompt="$1"
+    if [[ ! -t 0 ]]; then
+      echo "$prompt (y/n): non-interactive shell detected, defaulting to 'y'"
+      echo "y"
+    else
+      read -p "$prompt (y/n): " choice
+      echo "$choice"
+    fi
+  }
   
   if command -v wget > /dev/null 2>&1; then
-    echo "wget is installed" > /dev/null
+    echo "wget is installed"
   else
-    read -p "Procceed with installation of 'wget' (y/n): " choice
+    choice=$(confirm "Procceed with installation of 'wget'")
     if [[ $choice == "y" ]]; then
       echo "INFO Installing 'wget'" 
-      sudo $PACKAGE_MANAGER install -y wget > ~/dstroman.log 2>&1
+      sudo $PACKAGE_MANAGER install -y wget
       if command -v wget > /dev/null 2>&1; then
         echo "INFO 'wget' installed successfully"
       else
@@ -35,18 +53,18 @@ check_and_install_dependencies() {
   fi
   
   if command -v gum > /dev/null 2>&1; then
-    echo "gum is installed" > /dev/null
+    echo "gum is installed"
     else
-      read -p "Proceed with installation of 'gum' ? (y/n): " choice
+      choice=$(confirm "Proceed with installation of 'gum'?")
       if [[ $choice == "y" ]]; then
         echo "INFO Installing 'gum'" 
         cd $HOME
-        wget -q https://github.com/charmbracelet/gum/releases/download/v0.16.1/gum_0.16.1_Linux_x86_64.tar.gz >> ~/dstroman.log 2>&1
-        tar -xzf ~/gum_0.16.1_Linux_x86_64.tar.gz > /dev/null
-        sudo mv ~/gum_0.16.1_Linux_x86_64/gum /usr/local/bin/gum > /dev/null
-        sudo chmod +x /usr/local/bin/gum > /dev/null
-        sudo rm ~/gum_0.16.1_Linux_x86_64.tar.gz > /dev/null
-        sudo rm -rf ~/gum_0.16.1_Linux_x86_64 > /dev/null
+        wget https://github.com/charmbracelet/gum/releases/download/v0.16.1/gum_0.16.1_Linux_x86_64.tar.gz
+        tar -xzf ~/gum_0.16.1_Linux_x86_64.tar.gz
+        sudo mv ~/gum_0.16.1_Linux_x86_64/gum /usr/local/bin/gum
+        sudo chmod +x /usr/local/bin/gum
+        sudo rm ~/gum_0.16.1_Linux_x86_64.tar.gz
+        sudo rm -rf ~/gum_0.16.1_Linux_x86_64
         if command -v gum > /dev/null 2>&1; then
           gum log --level info "'gum' installed successfully"
         else
@@ -60,12 +78,12 @@ check_and_install_dependencies() {
   fi
   
   if command -v which > /dev/null 2>&1; then
-    echo "which is installed" > /dev/null
+    echo "which is installed"
   else
-    read -p "Proceed with installation of 'which' ? (y/n): " choice
+    choice=$(confirm "Proceed with installation of 'which'?")
     if [[ $choice == "y" ]]; then
       gum log --level info "Installing 'which'"
-      sudo $PACKAGE_MANAGER install -y which >> ~/dstroman.log 2>&1
+      sudo $PACKAGE_MANAGER install -y which
       if command -v which > /dev/null 2>&1; then
         gum log --level info "'which' installed successfully"
       else
@@ -80,11 +98,11 @@ check_and_install_dependencies() {
   
   
   if [[ ! -x $(which docker 2>/dev/null) ]]; then
-    read -p "Docker is not installed procceed with installation of docker (y/n): " choice
+    choice=$(confirm "Docker is not installed, proceed with installation of docker?")
     if [[ $choice == "y" ]]; then
         if [[ $PACKAGE_MANAGER == "apt" ]]; then
             gum log --level info "Installing Docker"
-            sudo $PACKAGE_MANAGER install -y docker.io docker-compose >> ~/dstroman.log 2>&1
+            sudo $PACKAGE_MANAGER install -y docker.io docker-compose
             if command -v docker > /dev/null 2>&1; then
               gum log --level info "Docker installed successfully"
             else
@@ -92,28 +110,29 @@ check_and_install_dependencies() {
               exit 1
             fi
             gum log --level info "Adding user to docker group"
-            sudo groupadd docker > /dev/null 2>&1
-            sudo usermod -aG docker $USER > /dev/null
+            getent group docker > /dev/null 2>&1 || sudo groupadd docker
+            sudo usermod -aG docker $USER
             gum log --level info "User added to docker group successfully"
             gum log --level info "Enabling Docker service"
-            sudo systemctl enable docker > /dev/null 2>&1
+            sudo systemctl enable docker
             gum log --level info "Docker service enabled successfully"
             gum log --level info "Starting Docker service"
-            sudo systemctl start docker > /dev/null 2>&1
-            if sudo systemctl is-active --quiet docker; then
+            sudo systemctl start docker
+            if sudo systemctl is-active docker; then
               gum log --level info "Docker service started successfully"
             else
               gum log --level error "Docker service failed to start"
               exit 1
             fi
+            gum log --level warn "After installation is complete, please log out and log back in to apply the changes."
         elif [[ $PACKAGE_MANAGER == "yum" ]]; then
             gum log --level info "Updating system"
-            sudo yum update > /dev/null 2>&1
-            sudo yum install -y yum-utils device-mapper-persistent-data lvm2 >> ~/dstroman.log 2>&1
+            sudo yum update
+            sudo yum install -y yum-utils device-mapper-persistent-data lvm2
             gum log --level info "System updated successfully"
             gum log --level info "Installing Docker"
-            sudo yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo >> ~/dstroman.log 2>&1
-            sudo yum install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin --allowerasing >> ~/dstroman.log 2>&1
+            sudo yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+            sudo yum install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin --allowerasing
             if command -v docker > /dev/null 2>&1; then
               gum log --level info "Docker installed successfully"
             else
@@ -121,15 +140,15 @@ check_and_install_dependencies() {
               exit 1
             fi
             gum log --level info "Adding user to docker group"
-            sudo groupadd docker > /dev/null 2>&1
-            sudo usermod -aG docker $USER > /dev/null
+            getent group docker > /dev/null 2>&1 || sudo groupadd docker
+            sudo usermod -aG docker $USER
             gum log --level info "User added to docker group successfully"
             gum log --level info "Enabling Docker service"
-            sudo systemctl enable docker > /dev/null 2>&1
+            sudo systemctl enable docker
             gum log --level info "Docker service enabled successfully"
             gum log --level info "Starting Docker service"
-            sudo systemctl start docker > /dev/null 2>&1
-            if sudo systemctl is-active --quiet docker; then
+            sudo systemctl start docker
+            if sudo systemctl is-active docker; then
               gum log --level info "Docker service started successfully"
             else
               gum log --level error "Docker service failed to start"
@@ -336,10 +355,8 @@ else
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --init)
-          check_and_install_dependencies
           gum log --level info "You are ready to go!"
           exit 0
-      shift 2
       ;;
       --help)
           echo "
@@ -356,14 +373,12 @@ else
 
           "
           exit 0;
-      shift 2;
       ;;
       --navigate)
 	        SELECTED_OBJECT_FILE=$(select_object_file);
 	        validate_empty $SELECTED_OBJECT_FILE
 	        open_editor $SELECTED_OBJECT_FILE
           exit 0
-      shift 2
       ;;
       --transfer) 
           SELECTED_TRANSFER_TYPE=$(gum choose "Copy" "Move" "Exit")
@@ -378,9 +393,8 @@ else
           fi
           SELECTED_TRANSFER_SOURCE=$(select_object_file)
           SELECTED_TRANSFER_DESTINATION=$(select_object_file)
-          sudo $ACTION "$SELECTED_TRANSFER_SOURCE" "$SELECTED_TRANSFER_DESTINATION" 2> /dev/null
+          sudo $ACTION "$SELECTED_TRANSFER_SOURCE" "$SELECTED_TRANSFER_DESTINATION"
           exit 0
-      shift 2
       ;;
     --list-backups)
           if [[ $(sudo ls -A ~/.config/dstroman/backups | wc -l) -eq 0 ]]; then 
@@ -389,7 +403,6 @@ else
             ls ~/.config/dstroman/backups
           fi
           exit 0
-      shift 2
       ;;
     --create-backup) 
           SELECTED_BACKUP_TYPE=$(gum choose "Object-file" "Object" "Exit")
@@ -406,7 +419,6 @@ else
           BACKUP_NAME=$(input_name)
           sudo cp -r "$SELECTED_BACKUP_FILE" ~/.config/dstroman/backups/"$BACKUP_NAME"
           exit 0
-      shift 2
       ;;
     --remove-backup)  
           if [[ $(sudo ls -A ~/.config/dstroman/backups | wc -l) -eq 0 ]]; then 
@@ -417,7 +429,6 @@ else
             sudo rm -r ~/.config/dstroman/backups/"$SELECTED_BACKUP"
           fi
           exit 0
-      shift 2
       ;;
       *)
         echo "Unknown option: $1"
