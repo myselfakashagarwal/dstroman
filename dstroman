@@ -1,7 +1,5 @@
 #!/bin/bash
 
-#----------------------------------------------------------handling dependencies -------------------------------------------------------#
-
 check_and_install_dependencies() { 
   PACKAGE_MANAGER=""
   if command -v yum > /dev/null 2>&1; then
@@ -20,8 +18,6 @@ check_and_install_dependencies() {
     sudo apt update
   fi
 
-  # Fix #7: fall back to auto-yes when there's no interactive terminal
-  # (e.g. run via curl | bash, cron, or CI) instead of hanging/failing on read -p
   confirm() {
     local prompt="$1"
     if [[ ! -t 0 ]]; then
@@ -176,9 +172,59 @@ check_and_install_dependencies() {
   fi 
 
 } 
-check_and_install_dependencies
 
-#--------------------------------------------------script user controls and components -------------------------------------------------#
+mac_check_dependencies() {
+  [[ -x /opt/homebrew/bin/brew ]] && eval "$(/opt/homebrew/bin/brew shellenv)"
+  export PATH="$HOME/.orbstack/bin:/usr/local/bin:$PATH"
+
+  touch ~/dstroman.log
+
+  if ! command -v gum > /dev/null 2>&1; then
+    if ! command -v brew > /dev/null 2>&1; then
+      echo "FATAL Homebrew is required to install 'gum' (https://brew.sh)"
+      exit 1
+    fi
+    read -p "Proceed with installation of 'gum'? (y/n): " choice
+    if [[ $choice == "y" ]]; then
+      brew install gum || { echo "ERROR 'gum' installation failed"; exit 1; }
+    else
+      echo "FATAL 'gum' not installed, its required for the script to run"
+      exit 1
+    fi
+  fi
+
+  if ! command -v docker > /dev/null 2>&1; then
+    gum log --level fatal "Docker not found. Install OrbStack (brew install --cask orbstack), open it once, then re-run"
+    exit 1
+  fi
+
+  if ! docker info > /dev/null 2>&1; then
+    command -v orb > /dev/null 2>&1 && orb start > /dev/null 2>&1
+    if ! docker info > /dev/null 2>&1; then
+      gum log --level error "Docker isn't reachable, start OrbStack (open -a OrbStack) and re-run"
+      exit 1
+    fi
+  fi
+
+  if [[ ! -e ~/.config/dstroman/backups ]]; then
+    gum log --level info "Creating backups directory"
+    mkdir -p ~/.config/dstroman/backups
+    gum log --level info "Backups directory created successfully"
+  fi
+
+  if [[ ! -e ~/.config/dstroman/editor ]]; then
+    gum log --level info "Creating editor configuration file"
+    mkdir -p ~/.config/dstroman
+    echo "echo" > ~/.config/dstroman/editor
+    gum log --level warn "Editor configuration file created successfully; by default it will echo the file path please edit it"
+  fi
+}
+
+if [[ $(uname -s) == "Darwin" ]]; then
+  mac_check_dependencies
+else
+  check_and_install_dependencies
+fi
 
 # later in working must be taken form initrial setup config 
 open_editor() {
@@ -189,6 +235,18 @@ open_editor() {
 validate_empty() {
   if [[ $1 == ""  ]]; then
     exit 1;
+  fi
+}
+
+# gum's file picker fails with "error entering raw mode: interrupted system call"
+# when it is launched through sudo. Browse as the current user when the directory
+# is readable and only elevate when root access is actually required.
+gum_file() {
+  local dir="${1:-$PWD}"
+  if [[ -r "$dir" && -x "$dir" ]]; then
+    gum file --padding "1 0 0 0" "$dir"
+  else
+    sudo "$(command -v gum)" file --padding "1 0 0 0" "$dir"
   fi
 }
 
@@ -261,29 +319,30 @@ select_container() {
 # Helper function: select container file   
 select_container_file() {  
   local SELECTED_CONTAINER=$(select_container);
-  validate_empty $SELECTED_CONTAINER
-  # Change to container directory and run gum as current user with sudo for file access
-  sudo $(which gum) file --directory "$SELECTED_CONTAINER"
+  validate_empty "$SELECTED_CONTAINER"
+  gum_file "$SELECTED_CONTAINER"
 }
 
 # Helper function: select host file
 select_host_file() {
-  sudo $(which gum) file --directory "$1" | xargs echo 
+  gum_file "${1:-$PWD}" | xargs echo 
 }
 
 # Helper function: select bind mount file 
 select_bind_file() {
-  docker ps | awk 'NR!=1{ print $1 }' | xargs docker inspect --format "{{with .Mounts}}{{range .}}{{$.ID}} {{$.Name}} {{.Source}} {{.Destination}}{{end}}{{end}}" | awk 'NF' | gum choose | awk '{ print $3 }' | while read path; do [[ -d "$path" ]] && gum file --directory "$path" || echo "$path"; done | xargs echo 
+  docker ps | awk 'NR!=1{ print $1 }' | xargs docker inspect --format "{{with .Mounts}}{{range .}}{{$.ID}} {{$.Name}} {{.Source}} {{.Destination}}{{end}}{{end}}" | awk 'NF' | gum choose | awk '{ print $3 }' | while read path; do [[ -d "$path" ]] && gum_file "$path" || echo "$path"; done | xargs echo 
 }
 
 # Helper function: select volume file 
 select_volume_file() {
    local SELECTED_VOLUME=$(select_volume)
+   local -a LS_CMD=(ls -A)
    validate_empty "$SELECTED_VOLUME"
-   if [[ $(sudo ls -A "$SELECTED_VOLUME" | wc -l) -eq 0 ]]; then 
+   [[ -r "$SELECTED_VOLUME" && -x "$SELECTED_VOLUME" ]] || LS_CMD=(sudo ls -A)
+   if [[ $("${LS_CMD[@]}" "$SELECTED_VOLUME" | wc -l) -eq 0 ]]; then 
      echo "$SELECTED_VOLUME"
    else 
-     sudo $(which gum) file --directory "$SELECTED_VOLUME" | xargs echo 
+     gum_file "$SELECTED_VOLUME" | xargs echo 
    fi
 }
 
@@ -345,6 +404,194 @@ input_name() {
   echo "$NAME"
 }
 
+
+if [[ $(uname -s) == "Darwin" ]]; then
+  ORB_ROOT="$HOME/OrbStack/docker"
+
+  select_container() {
+    local CONTAINER_ID=$(docker ps | awk 'NR!=1{ print }' | gum choose | awk '{ print $1 }')
+    if [[ -z "$CONTAINER_ID" ]]; then
+      return 1
+    fi
+    local CONTAINER_NAME=$(docker inspect --format '{{.Name}}' "$CONTAINER_ID" | sed 's#^/##')
+    echo "$ORB_ROOT/containers/$CONTAINER_NAME"
+  }
+
+  select_volume() {
+    local VOLUME_NAME=$(docker volume ls | awk 'NR!=1{ print }' | gum choose | awk '{ print $2 }')
+    if [[ -z "$VOLUME_NAME" ]]; then
+      return 1
+    fi
+    echo "$ORB_ROOT/volumes/$VOLUME_NAME"
+  }
+fi
+
+# multi-select with visible [x] / [ ] checkboxes (Space or x toggles, Enter confirms)
+ds_multi_choose() {
+  gum choose --no-limit --height 20 \
+    --cursor "> " --cursor-prefix "[ ] " --selected-prefix "[x] " --unselected-prefix "[ ] " \
+    --header "$1"
+}
+
+# pads tab-separated rows into aligned columns
+ds_pad_table() {
+  awk -F'\t' '
+    { for (i = 1; i <= NF; i++) { c[NR, i] = $i; if (length($i) > w[i]) w[i] = length($i) } if (NF > nf) nf = NF }
+    END {
+      for (r = 1; r <= NR; r++) {
+        line = ""
+        for (i = 1; i <= nf; i++) line = line sprintf("%-" w[i] "s  ", c[r, i])
+        sub(/ +$/, "", line)
+        print line
+      }
+    }'
+}
+
+# ds_check_pick <gum exit code> <selection>: never fail silently
+ds_check_pick() {
+  [[ $1 -eq 130 ]] && exit 0
+  [[ $1 -eq 0 ]] || { gum log --level error "gum choose failed (exit $1)"; exit 1; }
+  [[ -n $2 ]] || { gum log --level warn "Nothing checked. Toggle rows with Space (or x), then press Enter"; exit 0; }
+}
+
+# ds_ask "question" -> default answer is No
+ds_ask() {
+  gum confirm --default=false "$1"
+}
+
+# dstroman kill: multi-select containers / compose projects, force-remove them
+ds_kill() {
+  local menu raw kind selected line name targets="" projects="" count running rm_flags="-f" rm_vols=0 p net vol
+
+  raw=$(docker ps -a --format '{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Label "com.docker.compose.project"}}')
+  [[ -n $raw ]] || { gum log --level warn "No containers found"; exit 0; }
+
+  # Columns: KIND  NAME  IMAGE  STATUS  PROJECT. "compose" rows act on the whole project.
+  menu=$(
+    {
+      printf '%s\n' "$raw" | awk -F'\t' '$4 != "" { c[$4]++ } END { for (p in c) printf "compose\t%s\t(whole project)\t%d container(s)\t-\n", p, c[p] }' | sort
+      printf '%s\n' "$raw" | awk -F'\t' '{ printf "container\t%s\t%s\t%s\t%s\n", $1, $2, $3, ($4 == "" ? "-" : $4) }'
+    } | ds_pad_table
+  )
+
+  selected=$(printf '%s\n' "$menu" \
+    | ds_multi_choose "Space or x = check, Enter = confirm. 'compose' rows remove the whole project")
+  ds_check_pick $? "$selected"
+
+  while IFS= read -r line; do
+    read -r kind name _ <<< "$line"
+    case $kind in
+      compose)
+        projects="$projects$name"$'\n'
+        targets="$targets$(docker ps -a --filter "label=com.docker.compose.project=$name" --format '{{.Names}}')"$'\n'
+        ;;
+      container)
+        targets="$targets$name"$'\n'
+        ;;
+    esac
+  done <<< "$selected"
+
+  targets=$(printf '%s' "$targets" | awk 'NF' | sort -u)
+  projects=$(printf '%s' "$projects" | awk 'NF' | sort -u)
+  [[ -n $targets ]] || { gum log --level warn "Nothing selected"; exit 0; }
+
+  count=$(printf '%s\n' "$targets" | wc -l | tr -d ' ')
+  running=$(docker ps --format '{{.Names}}' | grep -Fxf <(printf '%s\n' "$targets") | wc -l | tr -d ' ')
+
+  gum log --level warn "About to FORCE-REMOVE $count container(s) ($running running, they will be SIGKILLed):"
+  sed 's/^/    - /' <<< "$targets"
+  ds_ask "Force kill and remove these $count container(s)? This cannot be undone." || exit 0
+
+  ds_ask "Also remove anonymous volumes attached to them?" && rm_flags="-fv"
+  if [[ -n $projects ]]; then
+    ds_ask "Also delete the NAMED volumes of the selected compose project(s)? (data loss)" && rm_vols=1
+  fi
+
+  while IFS= read -r name; do
+    if docker rm $rm_flags -- "$name" > /dev/null; then
+      gum log --level info "Removed $name"
+    else
+      gum log --level error "Failed to remove $name"
+    fi
+  done <<< "$targets"
+
+  # compose leftovers: networks (and optionally named volumes) labelled with the project
+  while IFS= read -r p; do
+    [[ -n $p ]] || continue
+    for net in $(docker network ls -q --filter "label=com.docker.compose.project=$p"); do
+      if docker network rm "$net" > /dev/null 2>&1; then
+        gum log --level info "Removed network $net of project '$p'"
+      else
+        gum log --level warn "Could not remove network $net of project '$p' (still in use?)"
+      fi
+    done
+    if [[ $rm_vols -eq 1 ]]; then
+      for vol in $(docker volume ls -q --filter "label=com.docker.compose.project=$p"); do
+        if docker volume rm "$vol" > /dev/null 2>&1; then
+          gum log --level info "Removed volume $vol"
+        else
+          gum log --level warn "Could not remove volume $vol (still in use?)"
+        fi
+      done
+    fi
+  done <<< "$projects"
+}
+
+ds_run_prune() {
+  case $1 in
+    "Stopped containers")               docker container prune -f ;;
+    "Dangling images")                  docker image prune -f ;;
+    "All unused images")                docker image prune -a -f ;;
+    "Unused networks")                  docker network prune -f ;;
+    "Build cache (unused)")             docker builder prune -f ;;
+    "Build cache (everything)")         docker builder prune -a -f ;;
+    "Anonymous volumes (unused)")       docker volume prune -f ;;
+    "All unused volumes"*)              docker volume prune -a -f ;;
+    "System ("*)                        docker system prune -f ;;
+    "EVERYTHING"*)                      docker system prune -a -f && docker volume prune -a -f ;;
+  esac
+}
+
+# dstroman prune: choose what to prune
+ds_prune() {
+  local selected line danger=0
+  local -a items=(
+    "Stopped containers"
+    "Dangling images"
+    "All unused images"
+    "Unused networks"
+    "Build cache (unused)"
+    "Build cache (everything)"
+    "Anonymous volumes (unused)"
+    "All unused volumes (incl. named)"
+    "System (containers, networks, dangling images, build cache)"
+    "EVERYTHING unused (system -a + all unused volumes)"
+  )
+
+  docker system df
+  selected=$(printf '%s\n' "${items[@]}" \
+    | ds_multi_choose "Space or x = check, Enter = confirm")
+  ds_check_pick $? "$selected"
+
+  gum log --level warn "Selected:"
+  sed 's/^/    - /' <<< "$selected"
+  while IFS= read -r line; do
+    case $line in "All unused volumes"*|"EVERYTHING"*) danger=1 ;; esac
+  done <<< "$selected"
+
+  ds_ask "Run the selected prune operations?" || exit 0
+  if [[ $danger -eq 1 ]]; then
+    ds_ask "This also deletes NAMED volumes that no container uses (data loss). Really continue?" || exit 0
+  fi
+
+  while IFS= read -r line; do
+    gum log --level info "Pruning: $line"
+    ds_run_prune "$line" || gum log --level error "Prune failed: $line"
+  done <<< "$selected"
+
+  docker system df
+}
+
 ####################################################################################################################################
 # Evaluating all options and arguments 
 NUMBER_OF_ARGUMENTS=$#
@@ -370,6 +617,8 @@ else
           --list-backups      <none>          List all the backups 
           --create-backup     <none>          To create backup of object like container or object files 
           --remove-backup     <none>          To delete backup
+          --kill              <none>          To select containers (and compose projects), force kill & remove them
+          --prune             <none>          To choose what to prune (networks, build cache, volumes, system ...)
 
           "
           exit 0;
@@ -428,6 +677,14 @@ else
             validate_empty "$SELECTED_BACKUP"
             sudo rm -r ~/.config/dstroman/backups/"$SELECTED_BACKUP"
           fi
+          exit 0
+      ;;
+      kill|--kill)
+          ds_kill
+          exit 0
+      ;;
+      prune|--prune)
+          ds_prune
           exit 0
       ;;
       *)
